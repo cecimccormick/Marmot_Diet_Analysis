@@ -1,0 +1,58 @@
+## Bash script to pair forward and reverse reads and filter before analysis
+
+## For processing fastq files that were initially separated into forward and reverse reads we used the micca package which can be found : https://micca.readthedocs.io/en/latest/pairedend_97.html
+
+## After installing the correct version of micca created a new terminal window. Before running this code, made sure that all of the forward and reverse were in the same folder and that they were all in the format (R1 for forwards and R2 for reverse) 
+
+  ##223_S103_L001_R1_001.fastq 
+  ## MarmotFastq was the name of the folder containing all of the files 
+
+
+micca mergepairs -i MarmotFastq/*_R1*.fastq -o merged.fastq -l 100 -d 30
+
+## Optional step after this is to determine the stats of the merged fasta files to get the overall quality of the reads and the pair 
+## This produces a graph that shows the general quality of the reads that we can examine 
+micca stats -i merged.fastq -o stats_merged
+
+This step gets rid of all of the primers that may still be in the read to remove some of the imperfections 
+micca trim -i merged.fastq -o trimmed.fastq -w TCGTCGGCAGCGTCAGATGTGTATAAGAGACAGGTGGGCAATCCTGAGCCAA -r GTCTCGTGGGCTCGGAGATGTGTATAAGAGACAGCCATTGAGTCTCTGCACCTATC -W -R -c
+
+## This gives a graph that shows the percentage of reads that would remain in our code if we used each of the standards 
+micca filterstats -i trimmed.fastq -o filterstats
+
+## Based on these graphs we decided that 0.75% Max EE rate and minimum read length of 40 bp would be the best for OUR samples 
+## Then we used these determined values to trim our data 
+micca filter -i trimmed.fastq -o filtered.fasta -e 0.75 -m 40
+
+## Once this was all done we were ready for the OTU selecting which required us to consider the types of clustering. We decided to use DENOVO-unoise 
+## This step does the clustering for us 
+micca otu -m denovo_unoise -i filtered.fasta -o denovo_unoise_otus -t 4 -c
+
+
+##Next we wanted to assign taxonomy which was a tricky step because there is not a lot of information or datasets that are available for the TRNL plant primer 
+## We found CaleDNA to be the best fit for us and we used the TRNL data base 
+## For using the micca system to classify we need to have a specific format (ie need to have a fasta with the trnl primers and the txt with their taxonomical assignment) 
+## Once we found this dataset we used the classify command 
+
+Micca classify -m cons -i otus.fasta -o taxa.txt \ --ref trnl_.fatsta --ref -tax trnl_taxonomy.txt 
+
+
+## Next step was to make the phylogenetic tree now that the otus have their correct assignment 
+
+## Was not able to do this in the same way that the micca tutorial does because we are using a different primer. 
+## Had to use a different program to align the sequences and then build and view the tree 
+
+## MSA was done by alligning the samples with internal ones. Used the MAFFT sequence program which alligns with itself
+##Then returned to MICCA for the tree creation
+
+micca tree -i denovo_unoise_otus/msa.fasta -o denovo_unoise_otus/tree.tree
+
+## Make sure to root the tree 
+
+micca root -i denovo_unoise_otus/tree.tree -o denovo_unoise_otus/tree_rooted.tree
+
+## Finally build the BIOM file 
+micca tobiom -i denovo_greedy_otus/otutable.txt -o denovo_greedy_otus/tables.biom \
+    -t denovo_greedy_otus/taxa.txt -s sampledata.txt
+
+## Once all of this was done we moved to phyloseq to begin interpreting our data. This required that we make all of the files csv and that there were correctly formatted (see included files for appropriate formatting) 
