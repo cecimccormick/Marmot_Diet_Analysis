@@ -1,0 +1,393 @@
+## Begin by installing the phyloseq package using biocmanager 
+
+## Install BiocManager if not already installed 
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.16")
+
+## Install Phyloseq and load the package 
+BiocManager::install("phyloseq")
+YesbrowseVignettes("phyloseq")
+browseVignettes("phyloseq")
+library("phyloseq")
+
+## Load other packages 
+library("ggplot2"); packageVersion("ggplot2")
+library("plyr"); packageVersion("plyr")
+library(plyr)
+install.packages("tidyverse")
+library(tidyverse)
+install.packages("devtools")
+devtools::install_github("jbisanz/qiime2R")
+library(qiime2R)
+if(!require('ecodist')) {
+  install.packages('ecodist')
+  library('ecodist')
+}
+library('ecodist')
+library(vegan)
+install.packages("rbiom")
+library(rbiom)
+library("ALDEx2")
+
+
+## Set the working directory that contains the otu table, taxa tables, and the metadata as csv files 
+setwd("C:/Users/ceciliamccormick/Desktop/UCLA Labs/Marmot/dennovo_unoise_otus")
+
+
+## Begin with the diet data that we are first going produce a phyloseq object with 
+otu_table <- read.csv("otutable.csv",sep=",",row.names=1, header=TRUE, check.names= FALSE)
+
+# Convert the to a matrix form and then createa a distance object 
+otu_table <- as.matrix(otu_table)
+otu_table_dist = dist(otu_table)
+
+## Read and convert the taxonomy, metadata, and a phylogenetic tree 
+taxonomy <- read.csv("taxa.csv",sep=",",row.names=1,header=TRUE)
+taxonomy <- as.matrix(taxonomy)
+metadata <- read.csv("metadata.csv", row.names=1, header= TRUE)
+phy_tree <- read_tree("tree_rooted.tree")
+
+
+## Use the phyloseq functions to convert the tables into the corrected form to make a phyloseq object from
+OTU <- otu_table(otu_table, taxa_are_rows=TRUE)
+
+## If you are interested in the relative abundance for plotting with more ease convert using the function below
+otu_RelAbundance <- transform_sample_counts(OTU, function(otu) otu/sum(otu))
+TAX <- tax_table(taxonomy)
+META <- sample_data(metadata)
+
+## Now make the phyloseq object from the OTU table, TAXA table, metadata, and the phylogenetic tree
+marmot <- phyloseq(otu_RelAbundance,TAX,META, phy_tree)
+
+
+## Once we have the phyloseq object we can begin to produce analysis on marmot object 
+##First need to make an ordination before in preparation for making the PCOA
+ord= ordinate(marmot, method = "PCoA", distance = "bray") #selected the most common distance matrix version
+
+# Plot the ordination with color being the metadata factor of interest 
+ord_age =plot_ordination(marmot, ord, type= "sample", axes = 1:2, color= "age_class", shape= NULL,
+                   title= "PCoA Diet Ordination by Age")+ stat_ellipse()
+ord_age
+
+## Plot the ordination with another metadata factor of interest - we also used colony area here 
+ord_col = plot_ordination(marmot, ord, type= "samples", axes = 1:2, color= "col_area", shape= NULL,
+                     label= NULL, title= "PCoA Diet Ordination by Colony Area") + stat_ellipse()
+ord_col
+
+
+## Either use the built in plot_bar or we can use this written function to plot the samples without black bars 
+plot_bar_2 <-  function (physeq, x = "Sample", y = "Abundance", fill = NULL, title = NULL, facet_grid = NULL, border_color = NA) 
+{
+  mdf = psmelt(physeq)
+  p = ggplot(mdf, aes_string(x = x, y = y, fill = fill))
+  p = p + geom_bar(stat = "identity", position = "stack",  color = border_color)
+  p = p + theme(axis.text.x = element_text(angle = -90, hjust = 0))
+  if (!is.null(facet_grid)) {
+    p <- p + facet_grid(facet_grid)
+  }
+  if (!is.null(title)) {
+    p <- p + ggtitle(title)
+  }
+  return(p)
+}
+
+data("GlobalPatterns")
+gp.ch <- subset_taxa(GlobalPatterns, Phylum == "Spirochaetes")
+
+# Then plot the abundance of samples at each level we are interested in reporting 
+# Include a color palette for the colors we want to use 
+smallPalette = c("pink",  "olivedrab", "navy", "white" )
+marmot_phylum_plot <- plot_bar_2(marmot, fill = "Phylum") 
+marmot_phylum_plot+ geom_bar(stat = "identity") + scale_fill_manual(values = smallPalette)
+
+
+# Below is optional code for examples that have too many families with low abundance that we do not want to plot
+isp <- prune_samples(sample_sums(marmot)>=10, marmot)
+ir=rarefy_even_depth(marmot)
+df <- as.data.frame(lapply(sample_data(ir),function (y) if(class(y)!="factor" ) as.factor(y) else y),stringsAsFactors=T)
+row.names(df) <- sample_names(ir)
+sample_data(ir) <- sample_data(df)
+merge_samples(ir, "col_area")
+plot_bar(ir, fill = "Phylum", title = "Phylum Relative Abundance in Diet") + scale_fill_manual(values = smallPalette)
+
+
+
+
+## Now to import the microbe data from the csv format that they were exported from qiime 
+otu_table_microbe <- read.csv("microbe_otu_table.csv", sep = ",",row.names=1, header=TRUE, check.names= FALSE)
+otu_table_microbe <- as.matrix(otu_table_microbe)
+
+## Import the taxonomy, for our samples this required removing the additional row R adds in 
+taxonomy_microbe <- read.csv("microbe_taxonomy.csv",sep=",", header = T)
+rownames(taxonomy_microbe) = taxonomy_microbe[,1]
+taxonomy_microbe = taxonomy_microbe[, -1]
+taxonomy_microbe <- as.matrix(taxonomy_microbe)
+
+## Read in metadata and tree 
+metadata_microbe <- read.table("microbe_edited_sample_metadata.txt", row.names=1, header= TRUE)
+phy_tree_microbe <- read_tree("tree.nwk")
+
+## Use phyloseq functions to convert into the proper format of each (also convert to relative abundance if that is wished)
+OTU_microbe <- otu_table(otu_table_microbe, taxa_are_rows = TRUE)
+otu_microbe_RelAbundance <- transform_sample_counts(OTU_microbe, function(otu) otu/sum(otu))
+TAX_microbe <- tax_table(taxonomy_microbe)
+META_microbe <- sample_data(metadata_microbe)
+
+
+## Create the phyloseq object for the microbes 
+microbe <- phyloseq(otu_microbe_RelAbundance, TAX_microbe, META_microbe)
+
+
+
+##First need to make an ordination before making the PCOA
+microbe_ord= ordinate(microbe, method = "PCoA", distance = "bray")
+
+## Plot the ordination for metadata factors of interest
+plot_ordination(microbe, microbe_ord, type= "sample", axes = 1:2, color= "age_class", shape= NULL,
+                label= NULL, title= "PCoA Microbe Ordination by Age") + stat_ellipse()
+
+plot_ordination(microbe, microbe_ord, type= "sample", axes = 1:2, color= "col_area", shape= NULL,
+                label= NULL, title= "PCoA Microbe Ordination by Colony Area") + stat_ellipse()
+
+
+## Use the same function that we wrote above to get the relative abundances of the microbes 
+MyMicrobePalette = c("red2",  "pink", "yellow1", "tan3", "springgreen3", 
+                     "yellowgreen", "limegreen", "olivedrab", "navy", "steelblue2", "skyblue", 
+                     "royalblue2", "coral", "mediumpurple", "goldenrod1", "bisque4", "aquamarine", "khaki", "red3", "white", 
+                     "peru", "peachpuff", "palegreen2", "plum3", "plum2", "orchid1", "lightgreen", "darkgreen")
+
+plot_bar(phylumGlommed_microbe, fill = "Phylum", title = "Relative Phylum Abundance Microbes")+ scale_fill_manual(values=MyMicrobePalette)
+plot_bar(familyGlommed_microbe, fill = "Family", title = "Relative Family Abundance Microbes")
+
+microbe_phylum_plot <- plot_bar_2(microbe, fill = "Phylum") 
+microbe_phylum_plot+ geom_bar(stat = "identity") + scale_fill_manual(values = MyMicrobePalette)
+
+## Before running this step we have too many families with low abundance so we reduce to the top 10 with 
+familyGlommed_microbe = tax_glom(microbe, "Family")
+# need to move filter these down to the top 10% as well to plot the family relative amounts
+# Now I want to combine those that are less than top 10
+microbe_family<-tax_glom(microbe, taxrank="Family")
+sorted = names(sort(taxa_sums(microbe_family), TRUE))
+Family10 = names(sort(taxa_sums(microbe_family), TRUE)[1:10])
+microbe10 = prune_taxa(Family10, microbe)
+microbe10Glommed = tax_glom(microbe10, "Family")
+
+## now we can plot 
+microbe_family_plot <- plot_bar_2(microbe10Glommed, fill = "Family") 
+microbe_family_plot+ geom_bar(stat = "identity") + scale_fill_manual(values = MyMicrobePalette)
+
+
+
+## Now both diet and microbes are loaded in we can now begin to compare for correlation between the two 
+
+# first read in the distance matrix of interest and convert it to a dist 
+microbe_dist = read.csv("jaccard-distance-matrix.csv") 
+microbe_dist_crude = dist(otu_table_microbe)
+
+# We required an aditional step to change names of samples that were wrong in initial reporting 
+colnames(otu_table) <- c("UDP0001", "UDP0002", "UDP0003" ,"UDP0009" ,"UDP0010", "UDP0011", "UDP0012" ,"UDP0014", "UDP0015", "UDP0019" ,"UDP0020"
+                         ,"UDP0021" ,"UDP0023" ,"UDP0024" ,"UDP0025", "UDP0026", "UDP0027", "UDP0030" ,"UDP0031", "UDP0034" ,"UDP0035", "UDP0081"
+                         ,"UDP0083" ,"UDP0088", "UDP0090", "UDP0103" ,"UDP0115", "UDP0118", "UDP0121", "UDP0123" ,"UDP0125", "UDP0126" ,"UDP0129"
+                          ,"UDP0134" ,"UDP0145", "UDP0148", "UDP0151", "UDP0153")
+
+# For the distance need a dataframe with the rows as samples and columns as variables
+inverted_otu_diet = t(otu_table)
+dist_diet = ecodist::distance(inverted_otu_diet, method = "bray-curtis")
+dist_diet = as.matrix(dist_diet)
+
+# Now take the distance matrix for the microbes 
+dist_microbe = read.csv("jaccard-distance-matrix.csv", row.names = 1)
+dist_microbe = as.matrix(dist_microbe)
+
+colnames(dist_microbe) <- c("UDP0001", "UDP0002", "UDP0003" ,"UDP0009" ,"UDP0010", "UDP0011", "UDP0012" ,"UDP0014", "UDP0015", "UDP0019" ,"UDP0020"
+                         ,"UDP0021" ,"UDP0023" ,"UDP0024" ,"UDP0025", "UDP0026", "UDP0027", "UDP0030" ,"UDP0031", "UDP0034" ,"UDP0035", "UDP0081"
+                         ,"UDP0083" ,"UDP0088", "UDP0090", "UDP0103" ,"UDP0115", "UDP0118", "UDP0121", "UDP0123" ,"UDP0125", "UDP0126" ,"UDP0129"
+                         ,"UDP0134" ,"UDP0145", "UDP0148", "UDP0151", "UDP0153")
+
+rownames(dist_microbe) <- c("", "UDP0001", "UDP0002", "UDP0003" ,"UDP0009" ,"UDP0010", "UDP0011", "UDP0012" ,"UDP0014", "UDP0015", "UDP0019" ,"UDP0020"
+                            ,"UDP0021" ,"UDP0023" ,"UDP0024" ,"UDP0025", "UDP0026", "UDP0027", "UDP0030" ,"UDP0031", "UDP0034" ,"UDP0035", "UDP0081"
+                            ,"UDP0083" ,"UDP0088", "UDP0090", "UDP0103" ,"UDP0115", "UDP0118", "UDP0121", "UDP0123" ,"UDP0125", "UDP0126" ,"UDP0129"
+                            ,"UDP0134" ,"UDP0145", "UDP0148", "UDP0151", "UDP0153")
+
+# Convert both to matrices 
+dist_microbe = as.dist(dist_microbe)
+diet_unifrac = UniFrac(marmot, weighted = FALSE)
+dist_diet = as.matrix(dist_diet)
+
+
+# Now we can run the MRM analysis with our decided number of permutations 
+MRM(formula = dist_diet~ dist_microbe , nperm = 10)
+ 
+
+# Now want to produce a permova test 
+permanova_diet <- adonis2(diet_unifrac ~ age_class, data=metadata)
+permanova_diet
+
+permanova_microbe <- adonis2(dist_microbe ~ age_class, data=metadata)
+permanova_microbe
+
+
+
+# Now we can conduct the aldex metadata analysis 
+# split the metadata by the two factors (up valley and down valley used at first)
+conds <- c(rep("DV", 24), rep("UV", 14))
+ 
+# New title for the table based on the metadata for each samples
+titla <- c("UDP1_DV",	"UDP2_DV",	"UDP3_DV",	"UDP9_DV",	"UDP10_DV",	"UDP11_DV",	
+           "UDP12_UV",	"UDP14_DV",	"UDP15_DV",	"UDP19_DV",	"UDP20_DV",	"UDP21_DV",	
+           "UDP23_DV",	"UDP24_DV",	"UDP25_UV",	"UDP26_UV",	"UDP27_DV",	"UDP30_DV",	
+           "UDP31_DV",	"UDP34_DV",	"UDP35_DV",	"UDP81_UV",	"UDP83_UV",	"UDP88_UV",	
+           "UDP90_UV",	"UDP103_DV",	"UDP115_UV",	"UDP118_DV",	"UDP121_UV",	"UDP123_UV",	
+           "UDP125_UV",	"UDP126_UV",	"UDP129_DV",	"UDP134_DV",	"UDP145_UV",	"UDP148_UV",	"UDP151_DV",	"UDP153_DV")
+
+# Make a copy of the otu table and change the names based on above 
+copy_table = otu_table_microbe
+colnames(copy_table) = titla
+
+## Run the aldex function to get within and between differences from the two conditions
+x <- aldex.clr(copy_table, conds, mc.samples=128, denom="all", verbose=F)
+x.tt <- aldex.ttest(x, paired.test=FALSE, verbose=FALSE)
+x.kw <- aldex.kw(x)
+x.effect <- aldex.effect(x, CI=T, verbose=FALSE)
+x.all <- data.frame(x.tt,x.effect)
+x.e <- x.e <- aldex.effect(x)
+par(mfrow=c(1,1))
+aldex.plot(x.all, type="MA", test="welch")
+aldex.plot(x.all, type="MW", test="welch")
+found.by.all <- which(x.all$we.ep < 0.05)
+
+## Plot different aldex interesting results
+points(x.all$.btw.UV[found.by.all],x.all$dif.btw.UV[found.by.all], pch=19,
+             cex=0.7, col=rgb(1,0,0,1))
+points(x.all$we.ep[found.by.all],x.all$we.ep[found.by.all], pch=19,
+      cex=0.7, col=rgb(1,0,0,1))
+points(x.all$we.ep[found.by.all], x.all$we.ep[found.by.all], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+par(mfrow=c(1,2))
+plot(x.all$effect, x.all$we.ep, log="y", cex=0.7, col=rgb(0,0,1,0.2),
+     pch=19, xlab="Effect size", ylab="P value", main="Effect size plot")
+points(x.all$effect, x.all$we.eBH, cex=0.7, col=rgb(1,0,0,0.2),
+       pch=19)
+abline(h=0.05, lty=2, col="grey")
+legend(15,1, legend=c("P value", "BH-adjusted"), pch=19, col=c("blue", "red"))
+plot(x.all$diff.btw, x.all$we.ep, log="y", cex=0.7, col=rgb(0,0,1,0.2),
+     pch=19, xlab="Difference", ylab="P value", main="Volcano plot")
+points(x.all$diff.btw, x.all$we.eBH, cex=0.7, col=rgb(1,0,0,0.2),
+       pch=19)
+abline(h=0.05, lty=2, col="grey")
+plot(x.all$diff.win, x.all$diff.btw, pch=19, cex=0.3, col=rgb(0,0,0,0.3),
+     xlab="Dispersion", ylab="Difference")
+points(x.all$diff.win[found.by.all], x.all$diff.btw[found.by.all], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+
+
+# Now we are going to attempt the same analysis on the diet data based on whether they are in gothictown or not
+
+gothic_titles = c("UDP1_Y",	"UDP2_Y",	"UDP3_N",	"UDP9_Y",	"UDP10_N",	"UDP11_N",	"UDP12_N",	"UDP14_N",
+                  "UDP15_N",	"UDP19_N",	"UDP20_N",	"UDP21_Y",	"UDP23_Y",	"UDP24_N",	"UDP25_N",
+                  "UDP26_N",	"UDP27_Y",	"UDP30_N",	"UDP31_N",	"UDP34_N",	"UDP35_N",	"UDP81_N",
+                  "UDP83_N",	"UDP88_N",	"UDP90_N",	"UDP103_Y",	"UDP115_N",	"UDP118_N",	"UDP121_N",
+                  "UDP123_N",	"UDP125_N",	"UDP126_N",	"UDP129_N",	"UDP134_N",	"UDP145_N",	"UDP148_N",	"UDP151_N",	"UDP153_N")
+
+conds_diet <- c(rep("Y", 7), rep("N", 31))
+
+diet_table = otu_table
+colnames(diet_table) = gothic_titles
+
+d <- aldex.clr(diet_table, conds_diet, mc.samples=128, denom="all", verbose=F)
+d.tt <- aldex.ttest(d, paired.test=FALSE, verbose=FALSE)
+d.effect <- aldex.effect(d, CI=T, verbose=FALSE)
+d.all <- data.frame(d.tt,d.effect)
+aldex.plot(d.all, type="MW", test="welch")
+aldex.plot(d.all, type="MA", test="welch")
+
+found.by.all.d <- which(d.all$we.ep < 0.05)
+
+points(d.all$rab.win.DV[found.by.all.d],d.all$rab.win.DV[found.by.all.d], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+points(d.all$we.ep[found.by.all.d],d.all$we.ep[found.by.all.d], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+# plot the within and between variation of the data
+plot(d.all$diff.win, d.all$diff.btw, pch=19, cex=0.3, col=rgb(0,0,0,0.3),
+     xlab="Dispersion", ylab="Difference")
+
+points(d.all$diff.win[found.by.all.d], d.all$diff.btw[found.by.all.d], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+
+
+# lets now export these datatable to csv files 
+write.csv(x.tt,"microbe_aldex.csv", row.names=TRUE)
+write.csv(d.tt,"diet_aldex.csv", row.names=T)
+
+
+# conduct an analysis on age for the diet 
+age_titles = c("UDP1_A",	"UDP2_A",	"UDP3_A",	"UDP9_A",	"UDP10_A",	"UDP11_A",	"UDP12_A",	"UDP14_A",
+                  "UDP15_A",	"UDP19_A",	"UDP20_A",	"UDP21_A",	"UDP23_A",	"UDP24_A",	"UDP25_A",
+                  "UDP26_A",	"UDP27_A",	"UDP30_A",	"UDP31_A",	"UDP34_A",	"UDP35_A",	"UDP81_A",
+                  "UDP83_A",	"UDP88_A",	"UDP90_A",	"UDP103_A",	"UDP115_Y",	"UDP118_Y",	"UDP121_Y",
+                  "UDP123_A",	"UDP125_A",	"UDP126_A",	"UDP129_Y",	"UDP134_Y",	"UDP145_A",	"UDP148_A",	
+               "UDP151_A",	"UDP153_A")
+conds_diet_age <- c(rep("Y", 5), rep("A", 33))
+
+diet_table_age = otu_table
+colnames(diet_table_age) = age_titles
+
+d_age <- aldex.clr(diet_table_age, conds_diet_age, mc.samples=128, denom="all", verbose=F)
+d_age.tt <- aldex.ttest(d_age, paired.test=FALSE, verbose=FALSE)
+d_age.kw <- aldex.kw(d_age)
+d_age.effect <- aldex.effect(d_age, CI=T, verbose=FALSE)
+d_age.all <- data.frame(d_age.tt,d_age.effect)
+
+aldex.plot(d_age.all, type="MW", test="welch")
+aldex.plot(d_age.all, type="MA", test="welch")
+
+found.by.all.d_age <- which(d_age.all$we.ep < 0.05)
+
+points(d_age.all$rab.win.DV[found.by.all.d_age],d_age.all$rab.win.DV[found.by.all.d_age], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+points(d_age.all$we.ep[found.by.all.d_age],d_age.all$we.ep[found.by.all.d_age], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+# plot the within and between variation of the data
+plot(d_age.all$diff.win, d_age.all$diff.btw, pch=19, cex=0.3, col=rgb(0,0,0,0.3),
+     xlab="Dispersion", ylab="Difference")
+
+points(d.all$diff.win[found.by.all.d], d.all$diff.btw[found.by.all.d], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+
+
+
+# Now we will do the same analysis for the microbes using the same sample names 
+microbe_age = otu_table_microbe
+colnames(microbe_age) = age_titles
+
+m_age <- aldex.clr(microbe_age, conds_diet_age, mc.samples=128, denom="all", verbose=F)
+m_age.tt <- aldex.ttest(m_age, paired.test=FALSE, verbose=FALSE)
+m_age.effect <- aldex.effect(m_age, CI=T, verbose=FALSE)
+m_age.all <- data.frame(m_age.tt,m_age.effect)
+
+par(mfrow=c(1,1))
+aldex.plot(m_age.all, type="MA", test="welch")
+aldex.plot(m_age.all, type="MW", test="welch")
+found.by.all.m_age <- which(m_age.all$we.ep < 0.05)
+
+points(m_age.all$.btw.UV[found.by.all],m_age.all$dif.btw.UV[found.by.all], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+points(m_age.all$we.ep[found.by.all],m_age.all$we.ep[found.by.all], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+points(m_age.all$we.ep[found.by.all], m_age.all$we.ep[found.by.all], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
+
+# plot the within and between variation of the data
+plot(m_age.all$diff.win, m_age.all$diff.btw, pch=19, cex=0.3, col=rgb(0,0,0,0.3),
+     xlab="Dispersion", ylab="Difference")
+
+points(m_age.all$diff.win[found.by.all.m_age], m_age.all$diff.btw[found.by.all.m_age], pch=19,
+       cex=0.7, col=rgb(1,0,0,1))
